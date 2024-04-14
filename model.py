@@ -33,33 +33,37 @@ class QMixNet(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.task_size = task_size
-        self.hyper_w1 = nn.Sequential(nn.Linear(input_size, hidden_size),
+        self.hyper_w1 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
                                       nn.ReLU(),
                                       nn.Linear(hidden_size, n_agents * hidden_size))
-        self.hyper_w2 = nn.Sequential(nn.Linear(input_size, hidden_size),
+        self.hyper_w2 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
                                       nn.ReLU(),
                                       nn.Linear(hidden_size, hidden_size))
-        self.hyper_b1 = nn.Linear(input_size, hidden_size)
-        self.hyper_b2 = nn.Sequential(nn.Linear(input_size, hidden_size),
+        self.hyper_b1 = nn.Linear(input_size * n_agents, hidden_size)
+        self.hyper_b2 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
                                       nn.ReLU(),
                                       nn.Linear(hidden_size, 1))
 
     def forward(self, flat_observations, q_values):
 
-        # flat_observations: (batch_size, max_seq_len, obs_shape)
-        # q_values: (batch_size, max_seq_len, n_agents)
+        # flat_observations: (batch_size, obs_shape * n_agents)
+        # q_values: (batch_size, n_agents)
 
         flat_observations = torch.tensor(flat_observations, dtype=torch.float32)
 
         batch_size = flat_observations.shape[0]
-        obs_shape = flat_observations.shape[-1]
+        obs_shape = flat_observations.shape[-1] // self.n_agents
         obs = flat_observations.reshape(-1, obs_shape)
         q_values = q_values.reshape(-1,1,self.n_agents)
 
-        obs, embeds = self.encode_observations(obs) # obs: (batch_size * max_seq_len, input_size)
+        obs, embeds = self.encode_observations(obs) # obs: (batch_size, input_size)
+        obs = obs.reshape(-1, self.input_size*self.n_agents)
 
         w1 = torch.abs(self.hyper_w1(obs))
         b1 = self.hyper_b1(obs)
+
+        w1 = w1.view(-1, self.n_agents, self.hidden_size)
+        b1 = b1.view(-1,1,self.hidden_size)
 
         hidden = F.elu(torch.bmm(q_values, w1) + b1)
 
@@ -70,7 +74,7 @@ class QMixNet(nn.Module):
         b2 = b2.view(-1, 1, 1)
 
         q_total = torch.bmm(hidden, w2) + b2
-        q_total = q_total.view(batch_size, -1, 1)
+        q_total = q_total.view(batch_size, 1)
         return q_total
 
 
