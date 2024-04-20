@@ -58,6 +58,20 @@ def init_buffers(args):
 
     return team_buffers
 
+
+action_mask = [0, 1, 8, 11]
+def action_process(raw_actions):
+
+    new_actions = {}
+    for k in raw_actions.keys():
+        action = raw_actions[k]
+        new_action = np.array([0,0,0,0,0,0,0,0,0,0,0,0],dtype=np.int32)
+        for i in range(len(action_mask)):
+            new_action[action_mask[i]] = action[i]
+        new_actions[k] = new_action
+
+    return new_actions
+
 def train(args):
 
     env = setup_env(args)
@@ -90,7 +104,8 @@ def train(args):
                 mod_obs = mod_obs[np.newaxis, :]
                 actions[j+1] = teams[team_idx].agents[agent_idx].take_action(mod_obs)
 
-            next_obs, rewards, dones, infos = env.step(actions)
+            env_actions = action_process(actions)
+            next_obs, rewards, dones, infos = env.step(env_actions)
             step += 1
 
             for j in range(args.team_num * args.member_num):
@@ -150,10 +165,10 @@ def train(args):
                 for team_idx in range(args.team_num):
                     if team_idx == 0:
                         continue
-                    teams[team_idx].mixnet = torch.load(teams[0].mixnet.state_dict())
-                    teams[team_idx].target_mixnet = torch.load(teams[0].target_mixnet.state_dict())
+                    teams[team_idx].mixnet.load_state_dict(teams[0].mixnet.state_dict())
+                    teams[team_idx].target_mixnet.load_state_dict(teams[0].target_mixnet.state_dict())
                     for agent_idx in range(args.member_num):
-                        teams[team_idx].agents[agent_idx].net = torch.load(teams[0].agents[agent_idx].net.state_dict())
+                        teams[team_idx].agents[agent_idx].net.load_state_dict(teams[0].agents[agent_idx].net.state_dict())
 
 def bug_de(args):
     env = setup_env(args)
@@ -187,7 +202,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_interval', type=int, default=50)     # 50
     parser.add_argument('--update_change', type=int, default=16)
     parser.add_argument('--update_times', type=int, default=8)
-    parser.add_argument('--para_update_interval', type=int, default=100)        # 100
+    parser.add_argument('--para_update_interval', type=int, default=50)        # 100
 
 
     args = parser.parse_args()

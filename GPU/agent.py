@@ -42,22 +42,22 @@ class TeamAgent():
         center_data = data['center']
         agent_datas = data['agents']
 
-        team_q_values = torch.zeros(size=(self.args.batch_size, 0), dtype=torch.float32)
-        team_q_targets = torch.zeros(size=(self.args.batch_size, 0), dtype=torch.float32)
+        team_q_values = torch.zeros(size=(self.args.batch_size, 0), dtype=torch.float32).to(self.args.device)
+        team_q_targets = torch.zeros(size=(self.args.batch_size, 0), dtype=torch.float32).to(self.args.device)
 
         for i in range(self.args.member_num):
-            obs = torch.tensor(agent_datas[i]['state'], dtype=torch.float32)
-            next_obs = torch.tensor(agent_datas[i]['next_state'], dtype=torch.float32)
-            actions = torch.tensor(agent_datas[i]['action'], dtype=torch.float32)
+            obs = torch.tensor(agent_datas[i]['state'], dtype=torch.float32).to(self.args.device)
+            next_obs = torch.tensor(agent_datas[i]['next_state'], dtype=torch.float32).to(self.args.device)
+            actions = torch.tensor(agent_datas[i]['action'], dtype=torch.float32).to(self.args.device)
             q_values = self.agents[i].get_q_value(obs, actions)
             q_targets = self.agents[i].get_q_target(next_obs)
 
             team_q_values = torch.cat((team_q_values, q_values), dim=-1)
             team_q_targets = torch.cat((team_q_targets, q_targets), dim=-1)
 
-        team_obs = torch.tensor(center_data['state'], dtype=torch.float32)
-        team_next_obs = torch.tensor(center_data['next_state'], dtype=torch.float32)
-        team_rewards = torch.tensor(center_data['reward'], dtype=torch.float32)
+        team_obs = torch.tensor(center_data['state'], dtype=torch.float32).to(self.args.device)
+        team_next_obs = torch.tensor(center_data['next_state'], dtype=torch.float32).to(self.args.device)
+        team_rewards = torch.tensor(center_data['reward'], dtype=torch.float32).to(self.args.device)
         team_rewards = torch.sum(team_rewards, dim=-1).unsqueeze(-1)
 
         q_tot = self.mixnet(team_obs, team_q_values)
@@ -106,7 +106,7 @@ class Agent():
         # flat_obs (batch_size, obs_shape)
         # actions (batch_size, action_dim)
         raw_q_value = self.net(flat_observations)
-        q_value = torch.zeros(size=(flat_observations.shape[0], 1), dtype=torch.float32)
+        q_value = torch.zeros(size=(flat_observations.shape[0], 1), dtype=torch.float32).to(self.args.device)
         for i in range(len(raw_q_value)):
             for j in range(self.args.batch_size):
                 action = int(actions[j][i])
@@ -119,7 +119,7 @@ class Agent():
     def get_q_target(self, flat_observations):
         # flat_obs (batch_size, obs_shape)
         raw_q_value = self.net(flat_observations)
-        q_target = torch.zeros(size=(flat_observations.shape[0], 1), dtype=torch.float32)
+        q_target = torch.zeros(size=(flat_observations.shape[0], 1), dtype=torch.float32).to(self.args.device)
         for i in range(len(raw_q_value)):
             for j in range(self.args.batch_size):
 
@@ -232,4 +232,4 @@ class TeamReplayBuffer:
 
         team_data['agents'] = datas
 
-        return team_data.to(device=self.device)
+        return team_data

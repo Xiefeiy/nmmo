@@ -317,15 +317,15 @@ class ActionDecoder(torch.nn.Module):
             {
                 "attack_style": torch.nn.Linear(hidden_size, 3),
                 "attack_target": torch.nn.Linear(hidden_size, hidden_size),
-                "market_buy": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_destroy": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_give_item": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_give_player": torch.nn.Linear(hidden_size, hidden_size),
-                "gold_quantity": torch.nn.Linear(hidden_size, 99),
-                "gold_target": torch.nn.Linear(hidden_size, hidden_size),
+                # "market_buy": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_destroy": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_give_item": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_give_player": torch.nn.Linear(hidden_size, hidden_size),
+                # "gold_quantity": torch.nn.Linear(hidden_size, 99),
+                # "gold_target": torch.nn.Linear(hidden_size, hidden_size),
                 "move": torch.nn.Linear(hidden_size, 5),
-                "inventory_sell": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_price": torch.nn.Linear(hidden_size, 99),
+                # "inventory_sell": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_price": torch.nn.Linear(hidden_size, 99),
                 "inventory_use": torch.nn.Linear(hidden_size, hidden_size),
             }
         )
