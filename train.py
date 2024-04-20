@@ -83,8 +83,10 @@ def train(args):
             for j in range(args.team_num * args.member_num):
                 if dones_mask[j+1] == True:
                     continue
-
+                
                 team_idx = j // 8
+                if team_idx > 0:
+                    continue
                 agent_idx = j % 8
                 mod_obs = obs[j+1]
                 mod_obs = mod_obs[np.newaxis, :]
@@ -96,7 +98,8 @@ def train(args):
             for j in range(args.team_num * args.member_num):
                 if dones_mask[j+1] == True:
                     continue
-
+                if j >= 8:
+                    continue
                 all_trajs[j + 1]['state'].append(np.array(obs[j + 1]))
                 all_trajs[j + 1]['action'].append(np.array(actions[j + 1]))
                 all_trajs[j + 1]['next_state'].append(np.array(next_obs[j + 1]))
@@ -116,27 +119,43 @@ def train(args):
 
         for j in range(args.team_num * args.member_num):
             team_idx = j // 8
+            if team_idx >= 1:
+                continue
             agent_idx = j % 8
             team_buffers[team_idx].add(all_trajs[j+1], agent_idx)
             # print(f"team_buffers[team_idx].buffers[0][0]['reward'][0].shape = {team_buffers[team_idx].buffers[0][0]['reward'][0]}")
 
         if team_buffers[0].size() > args.minimal_size:
-            team_datas = []
-            for j in range(args.team_num):
-                team_data = team_buffers[j].sample(args.batch_size)
-                team_datas.append(team_data)
+            for k in range(args.update_times):
+                
+                team_datas = []
+                for j in range(args.team_num):
+                    if j >= 1:
+                        continue
+                    team_data = team_buffers[j].sample(args.batch_size)
+                    team_datas.append(team_data)
 
 
-            teams[update_team_idx].update(team_datas[update_team_idx])
+                teams[update_team_idx].update(team_datas[update_team_idx])
 
             update_cnt += 1
-            if update_cnt % args.update_change == 0:
-                update_team_idx += 1
-                update_team_idx %= args.team_num
+            # if update_cnt % args.update_change == 0:
+            #     update_team_idx += 1
+            #     update_team_idx %= args.team_num
 
             if update_cnt % args.save_interval == 0:
                 torch.save(teams[update_team_idx].mixnet.state_dict(), f'./model/team_{update_cnt}.pth')
                 torch.save(teams[update_team_idx].agents[0].net.state_dict(), f'./model/agent_{update_cnt}.pth')
+
+            if update_cnt % args.para_update_interval == 0:
+                print("update other teams paramaters")
+                for team_idx in range(args.team_num):
+                    if team_idx == 0:
+                        continue
+                    teams[team_idx].mixnet = torch.load(teams[0].mixnet.state_dict())
+                    teams[team_idx].target_mixnet = torch.load(teams[0].target_mixnet.state_dict())
+                    for agent_idx in range(args.member_num):
+                        teams[team_idx].agents[agent_idx].net = torch.load(teams[0].agents[agent_idx].net.state_dict())
 
 def bug_de(args):
     env = setup_env(args)
@@ -156,11 +175,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--team_num', type=int, default=8)
     parser.add_argument('--member_num', type=int, default=8)
-    parser.add_argument('--episode_num', type=int, default=1000)
+    parser.add_argument('--episode_num', type=int, default=10000)
     parser.add_argument('--input_size', type=int, default=256)
     parser.add_argument('--hidden_size', type=int, default=256)
     parser.add_argument('--task_size', type=int, default=4096)
-    parser.add_argument('--buffer_capacity', type=int, default=1000)
+    parser.add_argument('--buffer_capacity', type=int, default=200)
     parser.add_argument('--minimal_size', type=int, default=64)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--lr', type=float, default=1e-5)
@@ -169,6 +188,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--save_interval', type=int, default=50)
     parser.add_argument('--update_change', type=int, default=16)
+    parser.add_argument('--update_times', type=int, default=8)
+    parser.add_argument('--para_update_interval', type=int, default=100)
 
 
     args = parser.parse_args()
