@@ -17,7 +17,7 @@ class Config(nmmo.config.Default):
         self.PROVIDE_NOOP_ACTION_TARGET = True
         self.MAP_FORCE_GENERATION = False
         self.PLAYER_N = args.num_agents
-        self.PLAYERS = list([self.PLAYERS[0] for i in range(8)])        # modified 2024/4/25
+        self.PLAYERS = [self.PLAYERS[0] for i in range(8)]
         self.HORIZON = args.max_episode_length
         self.MAP_N = args.num_maps
         self.PLAYER_DEATH_FOG = args.death_fog_tick
@@ -31,6 +31,8 @@ class Config(nmmo.config.Default):
         self.COMMUNICATION_SYSTEM_ENABLED = False
 
         self.COMBAT_SPAWN_IMMUNITY = args.spawn_immunity
+
+        print(f"this one Qmix/environment")
 
 class Postprocessor(StatPostprocessor):
     def __init__(self, env, is_multiagent, agent_id,

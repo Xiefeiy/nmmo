@@ -40,13 +40,13 @@ class Config:
     clip_coef = 0.1  # PPO clip coefficient
 
     # Environment Args
-    num_agents = 128  # Number of agents to use for training
-    num_npcs = 256  # Number of NPCs to use for training
+    num_agents = 64  # Number of agents to use for training
+    num_npcs = 16  # Number of NPCs to use for training
     max_episode_length = 1024  # Number of steps per episode
     death_fog_tick = None  # Number of ticks before death fog starts
     num_maps = 128  # Number of maps to use for training
     maps_path = "maps/train/"  # Path to maps to use for training
-    map_size = 128  # Size of maps to use for training
+    map_size = 32  # Size of maps to use for training
     resilient_population = 0.2  # Percentage of agents to be resilient to starvation/dehydration
     tasks_path = None  # Path to tasks to use for training
     eval_mode = False # Run the postprocessor in the eval mode

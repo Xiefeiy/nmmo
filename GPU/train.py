@@ -15,6 +15,7 @@ import pufferlib
 import pufferlib.emulation
 import pufferlib.models
 from nmmo.entity.entity import EntityState
+import wandb
 import pickle
 
 def setup_env(args):
@@ -90,7 +91,8 @@ def train(args):
         step = 0
 
         all_trajs = {k+1:{'state':[], 'action':[], 'next_state':[], 'reward':[], 'done': []} for k in range(args.team_num * args.member_num)}
-
+        episode_step = 0
+        team_reward = 0
         while not episode_done:
             actions = {}
 
@@ -107,6 +109,8 @@ def train(args):
             env_actions = action_process(actions)
             next_obs, rewards, dones, infos = env.step(env_actions)
             step += 1
+            for j in range(args.member_num):
+                team_reward += rewards[j+1]
 
             for j in range(args.team_num * args.member_num):
                 if dones_mask[j+1] == True:
@@ -116,7 +120,7 @@ def train(args):
                 all_trajs[j + 1]['state'].append(np.array(obs[j + 1]))
                 all_trajs[j + 1]['action'].append(np.array(actions[j + 1]))
                 all_trajs[j + 1]['next_state'].append(np.array(next_obs[j + 1]))
-                all_trajs[j + 1]['reward'].append(np.array(rewards[j + 1]))
+                all_trajs[j + 1]['reward'].append(np.array(rewards[j + 1]/100))
                 all_trajs[j + 1]['done'].append(np.array(dones[j + 1]))
             dones_mask = dones
 
@@ -127,7 +131,7 @@ def train(args):
                     break
 
             obs = next_obs
-
+        episode_step = step
         print(f"num_episode = {i}, step = {step}")
 
         for j in range(args.team_num * args.member_num):
@@ -149,8 +153,10 @@ def train(args):
                     team_datas.append(team_data)
 
 
-                teams[update_team_idx].update(team_datas[update_team_idx])
+                loss = teams[update_team_idx].update(team_datas[update_team_idx])
 
+                if args.log:
+                    wandb.log({'TD loss': loss})
             update_cnt += 1
             # if update_cnt % args.update_change == 0:
             #     update_team_idx += 1
@@ -169,6 +175,9 @@ def train(args):
                     teams[team_idx].target_mixnet.load_state_dict(teams[0].target_mixnet.state_dict())
                     for agent_idx in range(args.member_num):
                         teams[team_idx].agents[agent_idx].net.load_state_dict(teams[0].agents[agent_idx].net.state_dict())
+
+        if args.log:
+            wandb.log({'episode_step': episode_step, 'team_reward': team_reward})
 
 def bug_de(args):
     env = setup_env(args)
@@ -197,16 +206,19 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--gamma', type=float, default=0.98)
-    parser.add_argument('--target_update', type=int, default=5)
+    parser.add_argument('--target_update', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--save_interval', type=int, default=50)     # 50
     parser.add_argument('--update_change', type=int, default=16)
-    parser.add_argument('--update_times', type=int, default=8)
+    parser.add_argument('--update_times', type=int, default=16)
     parser.add_argument('--para_update_interval', type=int, default=50)        # 100
+    parser.add_argument('--log', type=bool, default=True)
 
 
     args = parser.parse_args()
 
+    if args.log:
+        wandb.init()
     # bug_de(args)
     train(args)
 

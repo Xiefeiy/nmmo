@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict
+import pickle
 
 import pufferlib
 import pufferlib.emulation
@@ -18,8 +19,12 @@ EntityId = EntityState.State.attr_name_to_col["id"]
 class QMixNet(nn.Module):
     def __init__(self, env, input_size=256, hidden_size=256, task_size=4096, n_agents=8, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(QMixNet, self).__init__()
-        self.flat_observation_space = env.flat_observation_space
-        self.flat_observation_structure = env.flat_observation_structure
+        with open('./flat_space.pkl', 'rb') as f:
+            self.flat_observation_space = pickle.load(f)
+        with open('./flat_structure.pkl', 'rb') as f:
+            self.flat_observation_structure = pickle.load(f)
+        # self.flat_observation_space = env.flat_observation_space
+        # self.flat_observation_structure = env.flat_observation_structure
         self.tile_encoder = TileEncoder(input_size)
         self.player_encoder = PlayerEncoder(input_size, hidden_size)
         self.item_encoder = ItemEncoder(input_size, hidden_size)
@@ -62,21 +67,32 @@ class QMixNet(nn.Module):
         obs = obs.reshape(-1, self.input_size*self.n_agents)
 
         w1 = torch.abs(self.hyper_w1(obs))
+        w1 = torch.clip(w1, 0,0.1)
         b1 = self.hyper_b1(obs)
+        b1 = torch.clip(b1, -1,1)
 
         w1 = w1.view(-1, self.n_agents, self.hidden_size)
         b1 = b1.view(-1,1,self.hidden_size)
 
         hidden = F.elu(torch.bmm(q_values, w1) + b1)
 
+        # hidden = hidden/torch.max(hidden)
+
+        # print(f"hidden = {hidden}")
+
         w2 = torch.abs(self.hyper_w2(obs))
         b2 = self.hyper_b2(obs)
+
+        w2 = torch.clip(w2, 0, 0.1)
+        b2 = torch.clip(b2, -1, 1)
 
         w2 = w2.view(-1, self.hidden_size, 1)
         b2 = b2.view(-1, 1, 1)
 
         q_total = torch.bmm(hidden, w2) + b2
         q_total = q_total.view(batch_size, 1)
+
+        # q_total = q_total/torch.max(q_total)
         return q_total
 
 
@@ -109,8 +125,13 @@ class QMixNet(nn.Module):
 class QNet(nn.Module):
     def __init__(self, env, input_size=256, hidden_size=256, task_size=4096, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(QNet, self).__init__()
-        self.flat_observation_space = env.flat_observation_space
-        self.flat_observation_structure = env.flat_observation_structure
+
+        with open('./flat_space.pkl', 'rb') as f:
+            self.flat_observation_space = pickle.load(f)
+        with open('./flat_structure.pkl', 'rb') as f:
+            self.flat_observation_structure = pickle.load(f)
+        # self.flat_observation_space = env.flat_observation_space
+        # self.flat_observation_structure = env.flat_observation_structure
 
         self.tile_encoder = TileEncoder(input_size).to(device=device)
         self.player_encoder = PlayerEncoder(input_size, hidden_size).to(device=device)
@@ -141,6 +162,8 @@ class QNet(nn.Module):
 
         obs = torch.cat([tile, my_agent, inventory, market, task], dim=-1)
         obs = self.proj_fc(obs)
+
+        # print(f"hidden_obs = {obs}")
 
         return obs, (
             player_embeddings,
@@ -338,6 +361,7 @@ class ActionDecoder(torch.nn.Module):
         if mask is not None:
           hidden = hidden.masked_fill(mask == 0, -1e9)
 
+        # hidden = torch.softmax(hidden, dim=-1)
         return hidden
 
     def forward(self, hidden, lookup):
@@ -378,12 +402,12 @@ class ActionDecoder(torch.nn.Module):
         for key, layer in self.layers.items():
           mask = None
           mask = action_targets[key]
+          # print(f"key = {key}, mask.shape = {mask.shape}")
           embs = embeddings.get(key)
           if embs is not None and embs.shape[1] != mask.shape[1]:
             b, _, f = embs.shape
             zeros = torch.zeros([b, 1, f], dtype=embs.dtype, device=embs.device)
             embs = torch.cat([embs, zeros], dim=1)
-
           action = self.apply_layer(layer, embs, mask, hidden)
           actions.append(action)
 
