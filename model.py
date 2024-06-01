@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict
+import pickle
 
 import pufferlib
 import pufferlib.emulation
@@ -16,10 +17,14 @@ EntityId = EntityState.State.attr_name_to_col["id"]
 
 
 class QMixNet(nn.Module):
-    def __init__(self, env, input_size=256, hidden_size=256, task_size=4096, n_agents=8):
+    def __init__(self, env, input_size=256, hidden_size=256, task_size=4096, n_agents=8, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(QMixNet, self).__init__()
-        self.flat_observation_space = env.flat_observation_space
-        self.flat_observation_structure = env.flat_observation_structure
+        with open('./flat_space.pkl', 'rb') as f:
+            self.flat_observation_space = pickle.load(f)
+        with open('./flat_structure.pkl', 'rb') as f:
+            self.flat_observation_structure = pickle.load(f)
+        # self.flat_observation_space = env.flat_observation_space
+        # self.flat_observation_structure = env.flat_observation_structure
         self.tile_encoder = TileEncoder(input_size)
         self.player_encoder = PlayerEncoder(input_size, hidden_size)
         self.item_encoder = ItemEncoder(input_size, hidden_size)
@@ -32,50 +37,73 @@ class QMixNet(nn.Module):
         self.n_agents = n_agents
         self.input_size = input_size
         self.hidden_size = hidden_size
+        self.w_hidden_size = 32
         self.task_size = task_size
-        self.hyper_w1 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
+        self.hyper_w1 = nn.Sequential(nn.Linear(input_size * n_agents, self.w_hidden_size),
                                       nn.ReLU(),
-                                      nn.Linear(hidden_size, n_agents * hidden_size))
-        self.hyper_w2 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
+                                      nn.Linear(self.w_hidden_size, n_agents * self.w_hidden_size))
+        self.hyper_w2 = nn.Sequential(nn.Linear(input_size * n_agents, self.w_hidden_size),
                                       nn.ReLU(),
-                                      nn.Linear(hidden_size, hidden_size))
-        self.hyper_b1 = nn.Linear(input_size * n_agents, hidden_size)
-        self.hyper_b2 = nn.Sequential(nn.Linear(input_size * n_agents, hidden_size),
+                                      nn.Linear(self.w_hidden_size, self.w_hidden_size))
+        self.hyper_b1 = nn.Linear(input_size * n_agents, self.w_hidden_size)
+        self.hyper_b2 = nn.Sequential(nn.Linear(input_size * n_agents, self.w_hidden_size),
                                       nn.ReLU(),
-                                      nn.Linear(hidden_size, 1))
+                                      nn.Linear(self.w_hidden_size, 1))
+
+        self.connect_q = nn.Linear(4,1)
+
+        self.device = device
 
     def forward(self, flat_observations, q_values):
 
         # flat_observations: (batch_size, obs_shape * n_agents)
         # q_values: (batch_size, n_agents)
 
-        flat_observations = torch.tensor(flat_observations, dtype=torch.float32)
+        flat_observations = torch.tensor(flat_observations, dtype=torch.float32).to(device=self.device)
 
         batch_size = flat_observations.shape[0]
         obs_shape = flat_observations.shape[-1] // self.n_agents
         obs = flat_observations.reshape(-1, obs_shape)
-        q_values = q_values.reshape(-1,1,self.n_agents)
+        # print(f"q_values.shape = {q_values.shape}")
+        q_values = q_values.reshape(-1,1,self.n_agents,4)
 
         obs, embeds = self.encode_observations(obs) # obs: (batch_size, input_size)
         obs = obs.reshape(-1, self.input_size*self.n_agents)
 
         w1 = torch.abs(self.hyper_w1(obs))
+        # w1 = torch.clip(w1, 0,0.1)
         b1 = self.hyper_b1(obs)
+        # b1 = torch.clip(b1, -1,1)
 
-        w1 = w1.view(-1, self.n_agents, self.hidden_size)
-        b1 = b1.view(-1,1,self.hidden_size)
+        w1 = w1.view(-1, self.n_agents, self.w_hidden_size)
+        b1 = b1.view(-1,1,self.w_hidden_size)
 
+        q_values = self.connect_q(q_values)
+        q_values = q_values.reshape(-1,1,self.n_agents)
+
+
+        # print(f"q_values.shape = {q_values.shape}")
+        # print(f"w1.shape = {w1.shape}")
         hidden = F.elu(torch.bmm(q_values, w1) + b1)
+
+        # hidden = hidden/torch.max(hidden)
+
+        # print(f"hidden = {hidden}")
 
         w2 = torch.abs(self.hyper_w2(obs))
         b2 = self.hyper_b2(obs)
 
-        w2 = w2.view(-1, self.hidden_size, 1)
+        # w2 = torch.clip(w2, 0, 0.1)
+        # b2 = torch.clip(b2, -1, 1)
+
+        w2 = w2.view(-1, self.w_hidden_size, 1)
         b2 = b2.view(-1, 1, 1)
 
         q_total = torch.bmm(hidden, w2) + b2
         q_total = q_total.view(batch_size, 1)
-        return q_total
+
+        # q_total = q_total/torch.max(q_total)
+        return q_total/100
 
 
     def encode_observations(self, flat_observations):
@@ -105,20 +133,26 @@ class QMixNet(nn.Module):
         )
 
 class QNet(nn.Module):
-    def __init__(self, env, input_size=256, hidden_size=256, task_size=4096):
+    def __init__(self, env, input_size=256, hidden_size=256, task_size=4096, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(QNet, self).__init__()
-        self.flat_observation_space = env.flat_observation_space
-        self.flat_observation_structure = env.flat_observation_structure
 
-        self.tile_encoder = TileEncoder(input_size)
-        self.player_encoder = PlayerEncoder(input_size, hidden_size)
-        self.item_encoder = ItemEncoder(input_size, hidden_size)
-        self.inventory_encoder = InventoryEncoder(input_size, hidden_size)
-        self.market_encoder = MarketEncoder(input_size, hidden_size)
-        self.task_encoder = TaskEncoder(input_size, hidden_size, task_size)
-        self.proj_fc = torch.nn.Linear(5 * input_size, input_size)
-        self.action_decoder = ActionDecoder(input_size, hidden_size)
-        # self.value_head = torch.nn.Linear(hidden_size, 1)
+        with open('./flat_space.pkl', 'rb') as f:
+            self.flat_observation_space = pickle.load(f)
+        with open('./flat_structure.pkl', 'rb') as f:
+            self.flat_observation_structure = pickle.load(f)
+        # self.flat_observation_space = env.flat_observation_space
+        # self.flat_observation_structure = env.flat_observation_structure
+
+        self.tile_encoder = TileEncoder(input_size).to(device=device)
+        self.player_encoder = PlayerEncoder(input_size, hidden_size).to(device=device)
+        self.item_encoder = ItemEncoder(input_size, hidden_size).to(device=device)
+        self.inventory_encoder = InventoryEncoder(input_size, hidden_size).to(device=device)
+        self.market_encoder = MarketEncoder(input_size, hidden_size).to(device=device)
+        self.task_encoder = TaskEncoder(input_size, hidden_size, task_size).to(device=device)
+        self.proj_fc = torch.nn.Linear(5 * input_size, input_size).to(device=device)
+        self.action_decoder = ActionDecoder(input_size, hidden_size).to(device=device)
+        # self.value_head = torch.nn.Linear(hidden_size, 1).to(device=device)
+        self.device = device
 
     def encode_observations(self, flat_observations):
         env_outputs = pufferlib.emulation.unpack_batched_obs(flat_observations,
@@ -139,6 +173,9 @@ class QNet(nn.Module):
         obs = torch.cat([tile, my_agent, inventory, market, task], dim=-1)
         obs = self.proj_fc(obs)
 
+        # print(f"hidden_obs = {obs}")
+
+        # return obs, env_outputs["ActionTargets"]
         return obs, (
             player_embeddings,
             item_embeddings,
@@ -152,7 +189,7 @@ class QNet(nn.Module):
         return actions_prob
 
     def forward(self, flat_observations):
-        flat_observations = torch.tensor(flat_observations, dtype=torch.float32)
+        flat_observations = torch.tensor(flat_observations, dtype=torch.float32).to(device=self.device)
         obs_shape = flat_observations.shape[-1]
         flat_observations = flat_observations.reshape(-1, obs_shape)
 
@@ -310,22 +347,40 @@ class TaskEncoder(torch.nn.Module):
 class ActionDecoder(torch.nn.Module):
     def __init__(self, input_size, hidden_size):
         super().__init__()
+        # self.layers = torch.nn.ModuleDict(
+        #     {
+        #         "attack_style": torch.nn.Linear(hidden_size, 3),
+        #         "attack_target": torch.nn.Linear(hidden_size, 101),
+        #         # "market_buy": torch.nn.Linear(hidden_size, hidden_size),
+        #         # "inventory_destroy": torch.nn.Linear(hidden_size, hidden_size),
+        #         # "inventory_give_item": torch.nn.Linear(hidden_size, hidden_size),
+        #         # "inventory_give_player": torch.nn.Linear(hidden_size, hidden_size),
+        #         # "gold_quantity": torch.nn.Linear(hidden_size, 99),
+        #         # "gold_target": torch.nn.Linear(hidden_size, hidden_size),
+        #         "move": torch.nn.Linear(hidden_size, 5),
+        #         # "inventory_sell": torch.nn.Linear(hidden_size, hidden_size),
+        #         # "inventory_price": torch.nn.Linear(hidden_size, 99),
+        #         "inventory_use": torch.nn.Linear(hidden_size, 13),
+        #     }
+        # )
+
         self.layers = torch.nn.ModuleDict(
             {
                 "attack_style": torch.nn.Linear(hidden_size, 3),
                 "attack_target": torch.nn.Linear(hidden_size, hidden_size),
-                "market_buy": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_destroy": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_give_item": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_give_player": torch.nn.Linear(hidden_size, hidden_size),
-                "gold_quantity": torch.nn.Linear(hidden_size, 99),
-                "gold_target": torch.nn.Linear(hidden_size, hidden_size),
+                # "market_buy": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_destroy": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_give_item": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_give_player": torch.nn.Linear(hidden_size, hidden_size),
+                # "gold_quantity": torch.nn.Linear(hidden_size, 99),
+                # "gold_target": torch.nn.Linear(hidden_size, hidden_size),
                 "move": torch.nn.Linear(hidden_size, 5),
-                "inventory_sell": torch.nn.Linear(hidden_size, hidden_size),
-                "inventory_price": torch.nn.Linear(hidden_size, 99),
+                # "inventory_sell": torch.nn.Linear(hidden_size, hidden_size),
+                # "inventory_price": torch.nn.Linear(hidden_size, 99),
                 "inventory_use": torch.nn.Linear(hidden_size, hidden_size),
             }
         )
+
 
     def apply_layer(self, layer, embeddings, mask, hidden):
         hidden = layer(hidden)
@@ -335,7 +390,60 @@ class ActionDecoder(torch.nn.Module):
         if mask is not None:
           hidden = hidden.masked_fill(mask == 0, -1e9)
 
+        # hidden = torch.softmax(hidden, dim=-1)
         return hidden
+
+
+    # def forward(self, hidden, lookup):
+    #     # (
+    #     #     player_embeddings,
+    #     #     inventory_embeddings,
+    #     #     market_embeddings,
+    #     #     action_targets,
+    #     # ) = lookup
+    #     action_targets = lookup
+    #
+    #     # embeddings = {
+    #     #     "attack_target": player_embeddings,
+    #     #     "market_buy": market_embeddings,
+    #     #     "inventory_destroy": inventory_embeddings,
+    #     #     "inventory_give_item": inventory_embeddings,
+    #     #     "inventory_give_player": player_embeddings,
+    #     #     "gold_target": player_embeddings,
+    #     #     "inventory_sell": inventory_embeddings,
+    #     #     "inventory_use": inventory_embeddings,
+    #     # }
+    #
+    #     action_targets = {
+    #         "attack_style": action_targets["Attack"]["Style"],
+    #         "attack_target": action_targets["Attack"]["Target"],
+    #         "market_buy": action_targets["Buy"]["MarketItem"],
+    #         "inventory_destroy": action_targets["Destroy"]["InventoryItem"],
+    #         "inventory_give_item": action_targets["Give"]["InventoryItem"],
+    #         "inventory_give_player": action_targets["Give"]["Target"],
+    #         "gold_quantity": action_targets["GiveGold"]["Price"],
+    #         "gold_target": action_targets["GiveGold"]["Target"],
+    #         "move": action_targets["Move"]["Direction"],
+    #         "inventory_sell": action_targets["Sell"]["InventoryItem"],
+    #         "inventory_price": action_targets["Sell"]["Price"],
+    #         "inventory_use": action_targets["Use"]["InventoryItem"],
+    #     }
+    #
+    #     actions = []
+    #     for key, layer in self.layers.items():
+    #       mask = None
+    #       mask = action_targets[key]
+    #       # print(f"key = {key}, mask.shape = {mask.shape}")
+    #       embs = None
+    #       # embs = embeddings.get(key)
+    #       # if embs is not None and embs.shape[1] != mask.shape[1]:
+    #       #   b, _, f = embs.shape
+    #       #   zeros = torch.zeros([b, 1, f], dtype=embs.dtype, device=embs.device)
+    #       #   embs = torch.cat([embs, zeros], dim=1)
+    #       action = self.apply_layer(layer, embs, mask, hidden)
+    #       actions.append(action)
+    #
+    #     return actions
 
     def forward(self, hidden, lookup):
         (
@@ -373,15 +481,15 @@ class ActionDecoder(torch.nn.Module):
 
         actions = []
         for key, layer in self.layers.items():
-          mask = None
-          mask = action_targets[key]
-          embs = embeddings.get(key)
-          if embs is not None and embs.shape[1] != mask.shape[1]:
-            b, _, f = embs.shape
-            zeros = torch.zeros([b, 1, f], dtype=embs.dtype, device=embs.device)
-            embs = torch.cat([embs, zeros], dim=1)
+            mask = None
+            mask = action_targets[key]
+            embs = embeddings.get(key)
+            if embs is not None and embs.shape[1] != mask.shape[1]:
+                b, _, f = embs.shape
+                zeros = torch.zeros([b, 1, f], dtype=embs.dtype, device=embs.device)
+                embs = torch.cat([embs, zeros], dim=1)
 
-          action = self.apply_layer(layer, embs, mask, hidden)
-          actions.append(action)
+            action = self.apply_layer(layer, embs, mask, hidden)
+            actions.append(action)
 
         return actions
